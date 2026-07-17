@@ -1,0 +1,20 @@
+EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+
+EMBEDDING_DEVICE = "cpu"
+
+LLM_MODEL = "llama-3.3-70b-versatile"
+
+TOP_K = 5
+
+FETCH_K = 20
+
+LAMBDA_MULT = 0.5
+
+
+SEARCH_TYPE = "mmr"
+
+TEMPERATURE = 0
+
+MAX_TOKENS = 1024
+
+MAX_CONTEXT_CHARS = 1500
