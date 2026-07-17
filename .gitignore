@@ -18,3 +18,10 @@ data/chunks/
 
 # Logs
 *.log
+
+# Generated data
+data/
+
+# Vector store
+*.faiss
+*.pkl
