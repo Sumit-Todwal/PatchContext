@@ -89,7 +89,7 @@ https://github.com/fastapi/fastapi
 
 - Which PR added lifespan support?
 
-- How is authentication implemented?
+- How are responses serialized?
 
 - Explain WebSocket support.
 
