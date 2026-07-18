@@ -1,5 +1,7 @@
 # PatchContext
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Streamlit-FF4B4B?logo=streamlit&logoColor=white)](https://patchcontext.streamlit.app/)
+
 A Retrieval-Augmented Generation (RAG) system that answers design and implementation questions about the [FastAPI](https://github.com/fastapi/fastapi) GitHub repository, using its commits, pull requests, issues, and discussion comments as grounded, cited context.
 
 Ask something like *"How does dependency injection work?"* or *"Which PR added lifespan support?"* and PatchContext retrieves the most relevant repository history and answers with source attribution back to the original commit, PR, or issue.
