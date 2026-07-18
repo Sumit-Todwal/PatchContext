@@ -57,6 +57,7 @@ def extract_sources(documents):
 
         sources.append(
             {
+                "type" : source_type,
                 "label": label,
                 "url": url,
             }
