@@ -62,7 +62,10 @@ AI-powered GitHub Repository Assistant.
 
 Currently indexed:
 
-**FastAPI**
+🔗 **[FastAPI](https://github.com/fastapi/fastapi)**
+
+Repository:
+https://github.com/fastapi/fastapi
 
 ---
 

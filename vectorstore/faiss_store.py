@@ -122,38 +122,18 @@ def vectorstore_exists():
     )
 
 
-def get_vectorstore(force_rebuild=False):
+def get_vectorstore():
     """
-    Return a FAISS vector store.
-
-    If an index already exists, load it.
-    Otherwise create a new one.
+    Load the prebuilt FAISS vector store.
     """
 
-    if vectorstore_exists() and not force_rebuild:
-
-        logger.info(
-            "Existing FAISS index found."
+    if not vectorstore_exists():
+        raise FileNotFoundError(
+            "FAISS index not found. Build it locally using "
+            "'python vectorstore/faiss_store.py' before deployment."
         )
 
-        return load_vectorstore()
-
-    logger.info(
-        "Creating a new FAISS index..."
-    )
-
-    chunks = load_chunks()
-
-    vectorstore = create_vectorstore(
-        chunks
-    )
-
-    save_vectorstore(
-        vectorstore
-    )
-
-    return vectorstore
-
+    return load_vectorstore()
 
 def main():
 
