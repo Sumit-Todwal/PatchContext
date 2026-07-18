@@ -112,6 +112,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+st.markdown("""
+<style>
+div[data-testid="InputInstructions"] {
+    display: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # -------------------------------
 # Question Input
 # -------------------------------
