@@ -2,7 +2,7 @@ EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 
 EMBEDDING_DEVICE = "cpu"
 
-LLM_MODEL = "llama-3.3-70b-versatile"
+LLM_MODEL = "openai/gpt-oss-120b"
 
 TOP_K = 5
 
