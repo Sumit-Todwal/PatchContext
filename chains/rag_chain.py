@@ -1,3 +1,4 @@
+from prompts.router_prompt import CONTEXT_CHECK_PROMPT
 from retrieval.retriever import (
     retrieve_documents,
     format_documents,
@@ -66,22 +67,13 @@ def extract_sources(documents):
     return sources
 
 
-def generate_answer(question: str) -> dict:
+def check_context(question: str, context: str) -> bool:
     """
-    Generate an answer using Retrieval-Augmented Generation.
+    Determine whether retrieved repository context is sufficient
+    to answer the question.
     """
 
-    logger.info(f"Question: {question}")
-
-    logger.info("Retrieving relevant documents...")
-
-    documents = retrieve_documents(question)
-
-    context = format_documents(documents)
-
-    logger.info("Generating answer...")
-
-    prompt = RAG_PROMPT.invoke(
+    prompt = CONTEXT_CHECK_PROMPT.invoke(
         {
             "context": context,
             "question": question,
@@ -90,12 +82,91 @@ def generate_answer(question: str) -> dict:
 
     response = llm.invoke(prompt)
 
-    logger.info("Answer generated successfully.")
+    decision = response.content.strip().upper()
+
+    return decision.startswith("YES")
+
+
+
+def generate_answer(question: str) -> dict:
+    """
+    Generate an answer using repository context first.
+    If the context is insufficient, fall back to web search.
+    """
+
+    logger.info(f"Question: {question}")
+
+    # -------------------------------------------------
+    # 1. Repository Context Search
+    # -------------------------------------------------
+
+    logger.info("Retrieving relevant documents...")
+
+    documents = retrieve_documents(question)
+
+    context = format_documents(documents)
+
+    context_sources = extract_sources(documents)
+
+    # -------------------------------------------------
+    # 2. Check whether context is sufficient
+    # -------------------------------------------------
+
+    logger.info("Checking context relevance...")
+
+    context_found = check_context(
+        question,
+        context
+    )
+
+    # -------------------------------------------------
+    # 3. Answer from repository context
+    # -------------------------------------------------
+
+    if context_found:
+
+        logger.info("Sufficient repository context found.")
+
+        prompt = RAG_PROMPT.invoke(
+            {
+                "context": context,
+                "question": question,
+            }
+        )
+
+        response = llm.invoke(prompt)
+
+        return {
+            "answer": response.content,
+            "source_type": "context",
+            "context_found": True,
+            "web_searched": False,
+            "context_sources": context_sources,
+            "web_sources": [],
+        }
+
+    # -------------------------------------------------
+    # 4. Web Search fallback
+    # -------------------------------------------------
+
+    logger.info(
+        "Repository context insufficient. "
+        "Searching the web..."
+    )
+
+    from utils.web_search import web_search
+
+    web_result = web_search(question)
 
     return {
-        "answer": response.content,
-        "sources": extract_sources(documents),
+        "answer": web_result["answer"],
+        "source_type": "web",
+        "context_found": False,
+        "web_searched": True,
+        "context_sources": context_sources,
+        "web_sources": [],
     }
+
 
 
 def main():

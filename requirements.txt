@@ -20,3 +20,5 @@ pandas
 requests
 
 tiktoken
+
+openai
