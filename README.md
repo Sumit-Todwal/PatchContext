@@ -2,139 +2,120 @@
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Streamlit-FF4B4B?logo=streamlit&logoColor=white)](https://patchcontext.streamlit.app/)
 
-A Retrieval-Augmented Generation (RAG) system that answers design and implementation questions about the [FastAPI](https://github.com/fastapi/fastapi) GitHub repository, using its commits, pull requests, issues, and discussion comments as grounded, cited context.
+A Retrieval-Augmented Generation system that answers design and implementation questions about a GitHub repository, grounded in its own commits, pull requests, issues, and discussion comments — with a web search fallback for questions the repository's history can't answer.
 
-Ask something like *"How does dependency injection work?"* or *"Which PR added lifespan support?"* and PatchContext retrieves the most relevant repository history and answers with source attribution back to the original commit, PR, or issue.
+Currently indexed: the [FastAPI](https://github.com/fastapi/fastapi) repository.
 
-## How It Works
+The core idea: asking an LLM directly "how does dependency injection work in FastAPI" gets a plausible-sounding answer that may not reflect how *this specific codebase* implements it, or *why* a design decision was made. PatchContext retrieves the actual commits, PRs, and issue threads where that was discussed, and answers from that evidence — but not every question is answerable from repo history alone (e.g. "what's the latest FastAPI version?"). For those, it falls back to a live web search instead of forcing an answer out of context that doesn't contain it.
 
+---
+
+## Architecture
+
+```mermaid
+flowchart TD
+    A[GitHub REST API<br/>commits · PRs · issues · comments] -->|ingestion| B[Raw JSON]
+    B -->|preprocessing: clean + chunk<br/>500 tokens / 100 overlap| C[Chunks]
+    C -->|embed: bge-small-en-v1.5, CPU| D[Vector Embeddings]
+    D -->|store| E[(FAISS Index)]
+
+    F[User Question] --> G[MMR Retrieval<br/>k=5, fetch_k=20, λ=0.5]
+    G --> E
+    E --> H[Retrieved Chunks]
+    H --> I{LLM Context Check<br/>sufficient?}
+
+    I -->|YES| J[Answer from Repo Context<br/>gpt-oss-120b via Groq]
+    I -->|NO| K[Groq browser_search tool<br/>live web search]
+
+    J --> L[Answer + Repo Sources]
+    K --> M[Answer from Web]
+
+    style E fill:#f6f8fa,stroke:#333
+    style I fill:#f6f8fa,stroke:#333
 ```
-GitHub REST API
-      │
-      ▼
-ingestion/           → fetches commits, pull requests, issues, and PR/issue comments
-                        via the GitHub API (paginated, with retry + backoff)
-      │
-      ▼
-preprocessing/        → normalizes each source type into a common document format,
-                         removes empty/short/duplicate/dependency-bump noise,
-                         and splits documents into overlapping chunks
-                         (tiktoken-aware, 500 tokens / 100 overlap)
-      │
-      ▼
-vectorstore/          → embeds chunks locally with BAAI/bge-small-en-v1.5
-                         and builds a FAISS index
-      │
-      ▼
-retrieval/            → retrieves relevant chunks using Maximal Marginal
-                         Relevance (k=5, fetch_k=20, λ=0.5) for a mix of
-                         relevance and diversity, then formats them with
-                         metadata into an LLM-ready context block
-      │
-      ▼
-chains/rag_chain.py   → prompts an LLM (Groq's llama-3.3-70b-versatile) with
-                         the retrieved context and extracts a deduplicated
-                         list of sources (Issue / PR / Commit / Comment)
-      │
-      ▼
-app.py                 → Streamlit UI: ask a question, get an answer with
-                          its sources linked
-```
+
+## How it works
+
+**1. Ingestion** (`ingestion/`)
+Commits, pull requests, issues, and PR/issue comments are pulled from the GitHub REST API, paginated with retry and backoff. `DEVELOPMENT_MODE` currently caps this to the first 20 PRs and 20 issues, so the index reflects a partial slice of FastAPI's history rather than the full repo.
+
+**2. Preprocessing** (`preprocessing/`)
+Each source type is normalized into a common document format, empty/short/duplicate/dependency-bump noise is filtered out, and documents are split into overlapping chunks (500 tokens, 100 overlap), keeping source metadata (type, number, URL) attached to each chunk.
+
+**3. Embedding + Indexing** (`vectorstore/`)
+Chunks are embedded locally on CPU with `BAAI/bge-small-en-v1.5` and written to a FAISS index.
+
+**4. Retrieval** (`retrieval/retriever.py`)
+Questions are matched against the index using MMR search (`k=5, fetch_k=20, λ=0.5`) to balance relevance with diversity, so the retrieved set isn't five near-duplicate chunks about the same PR. Retrieved chunks are deduplicated and formatted into a structured context block, truncated to 1500 characters per document.
+
+**5. Context sufficiency check** (`chains/rag_chain.py`)
+Before generating an answer, a separate LLM call (`check_context`, using `CONTEXT_CHECK_PROMPT`) judges whether the retrieved repo context is actually sufficient to answer the question — this is an LLM judgment call, not a similarity-score threshold.
+
+**6a. Answer from repo context** — if sufficient
+The retrieved context and question are passed to `gpt-oss-120b` (served via Groq, `temperature=0`) through `RAG_PROMPT`, and the answer is returned with `source_type: "context"` alongside the specific PRs/issues/commits/comments it drew from, each with a label and GitHub URL.
+
+**6b. Web search fallback** — if not sufficient
+The question is passed to `utils/web_search.py`, which calls Groq's hosted `browser_search` tool (via the OpenAI-compatible Responses API, `tool_choice="required"`) to search the live web and generate an answer directly, returned with `source_type: "web"`.
+
+**7. UI** (`app.py`)
+A Streamlit interface shows which path answered the question (repo context, web, or both), the answer, and the sources — repo sources link back to the originating commit/PR/issue; a section for individual web source links exists in the UI but isn't populated yet by the current chain (`web_sources` is always returned empty).
 
 ## Tech Stack
 
 | Layer | Choice |
 |---|---|
 | Orchestration | LangChain |
-| LLM | Groq — `llama-3.3-70b-versatile` |
+| LLM (answer generation) | `openai/gpt-oss-120b` via Groq |
+| Web search fallback | Groq's `browser_search` tool (OpenAI-compatible Responses API) |
 | Embeddings | HuggingFace `BAAI/bge-small-en-v1.5` (local, CPU) |
 | Vector store | FAISS |
-| Retrieval strategy | Maximal Marginal Relevance (MMR) |
+| Retrieval strategy | MMR (k=5, fetch_k=20, λ=0.5) |
 | Data source | GitHub REST API (commits, PRs, issues, comments) |
 | UI | Streamlit |
 
 ## Project Structure
 
 ```
-PatchContext/
-├── app.py                # Streamlit UI
-├── chains/rag_chain.py   # Retrieval + LLM call, source extraction
-├── config/                # Central settings: target repo, models, chunking, paths
-├── ingestion/              # GitHub API client + fetch scripts (commits, PRs, issues, comments)
-├── preprocessing/          # Normalize, clean, and chunk raw data into embeddable documents
-├── models/                 # LLM and embedding model factories
-├── vectorstore/             # FAISS index build / load / save
-├── retrieval/               # Retriever construction + context formatting
-├── prompts/                 # RAG prompt template
-└── requirements.txt
+├── ingestion/       # GitHub API client + fetch scripts (commits, PRs, issues, comments)
+├── preprocessing/   # Normalize, clean, and chunk raw data into embeddable documents
+├── vectorstore/     # FAISS index build / load / save
+├── retrieval/        # MMR retriever + context formatting
+├── chains/            # rag_chain.py: context check → answer or web fallback
+├── models/             # LLM and embedding model factories
+├── prompts/             # RAG prompt + context-check prompt templates
+├── utils/                # web_search.py (Groq browser_search), logger
+├── guardrails/            # Input/output checks on the chain
+├── evaluation/             # Pipeline evaluation
+├── config/                  # Central settings: models, chunking, paths, retrieval params
+└── app.py                    # Streamlit UI
 ```
 
-## Setup
+## Example Questions
 
-**1. Clone and install**
+- How does dependency injection work? *(answered from repo context)*
+- Which PR added lifespan support? *(answered from repo context)*
+- What is the latest FastAPI version? *(answered via web fallback)*
+
+## Running Locally
+
 ```bash
 git clone https://github.com/Sumit-Todwal/PatchContext.git
 cd PatchContext
-python -m venv venv
-source venv/bin/activate      # venv\Scripts\activate on Windows
 pip install -r requirements.txt
 ```
 
-**2. Environment variables**
+Set `GITHUB_TOKEN` and `GROQ_API_KEY` in a `.env` file, then run the ingestion pipeline once (`ingestion/` → `preprocessing/` → `vectorstore/`) to build the FAISS index, and start the app:
 
-Create a `.env` file in the project root:
-```
-GITHUB_TOKEN=your_github_personal_access_token
-GROQ_API_KEY=your_groq_api_key
-```
-`GITHUB_TOKEN` raises the GitHub API rate limit from 60 to 5,000 requests/hour — needed since ingestion is paginated.
-
-**3. Set the target repository**
-
-`config/github.py` needs `REPO_OWNER` and `REPO_NAME` defined:
-```python
-REPO_OWNER = "fastapi"
-REPO_NAME = "fastapi"
-```
-
-**4. Run the pipeline once, in order**
-```bash
-python -m ingestion.fetch_commits
-python -m ingestion.fetch_prs
-python -m ingestion.fetch_issues
-python -m ingestion.fetch_pr_comments
-python -m ingestion.fetch_issues_comments
-python -m preprocessing.document_builder
-python -m preprocessing.cleaner
-python -m preprocessing.chunker
-python -m vectorstore.faiss_store
-```
-This builds `data/raw/`, `data/processed/`, and the FAISS index at `data/faiss/`. `DEVELOPMENT_MODE` in `config/settings.py` caps comment-fetching to the first 20 PRs/issues — raise `MAX_PRS_TO_PROCESS` / `MAX_ISSUES_TO_PROCESS` for a larger index.
-
-**5. Run the app**
 ```bash
 streamlit run app.py
 ```
 
-## Deployment (Streamlit Community Cloud)
+## Known Limitations
 
-`data/` (including the FAISS index) is gitignored by default, so a fresh deployment needs it committed:
+- The context-sufficiency check is a single LLM judgment call, not a calibrated threshold — it can be wrong in either direction (falling back when repo context would have sufficed, or vice versa).
+- The web fallback answers from Groq's browser search directly; it doesn't currently return individual cited web source links, even though the UI has a section built for them.
+- The FAISS index is built from a capped subset of PRs/issues (`DEVELOPMENT_MODE`), not the full repository history.
 
-```bash
-git add -f data/faiss/github_index.faiss data/faiss/github_index.pkl
-git commit -m "Add prebuilt FAISS index for deployment"
-git push
-```
+---
 
-Then on **share.streamlit.io**:
-1. **New app** → repo `Sumit-Todwal/PatchContext`, branch `main`, main file `app.py`
-2. **Advanced settings → Secrets** →
-   ```
-   GROQ_API_KEY = "your_groq_api_key"
-   ```
-3. Deploy. The app loads the committed FAISS index directly — no ingestion runs on the server, and `GITHUB_TOKEN` isn't needed there since that's only used for the local build step above.
-
-## Roadmap
-
-- Hallucination guard: a check that flags answer sentences not clearly supported by the retrieved context.
-- RAGAs-based evaluation of the pipeline (faithfulness, answer relevancy, context precision) against a fixed question set.
+Originated as a data science internship project at Celebal Technologies.
